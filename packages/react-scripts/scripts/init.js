@@ -33,9 +33,30 @@ module.exports = function(
   const ownPath = path.join(appPath, 'node_modules', ownPackageName);
   const appPackage = require(path.join(appPath, 'package.json'));
   const useYarn = fs.existsSync(path.join(appPath, 'yarn.lock'));
+  const templateDependenciesPath = template
+    ? path.resolve(originalDirectory, template, '.template.dependencies.json')
+    : path.join(ownPath, 'template', '.template.dependencies.json');
+
+  let templateDependencies = {};
+  if (fs.existsSync(templateDependenciesPath)) {
+    templateDependencies = require(templateDependenciesPath);
+  }
 
   // Copy over some of the devDependencies
   appPackage.dependencies = appPackage.dependencies || {};
+
+  // Additional template dependencies
+  appPackage.dependencies = Object.assign(
+    {},
+    appPackage.dependencies,
+    templateDependencies.dependencies
+  );
+
+  appPackage.devDependencies = Object.assign(
+    {},
+    appPackage.devDependencies,
+    templateDependencies.devDependencies
+  );
 
   // Setup the script rules
   appPackage.scripts = {
@@ -44,6 +65,18 @@ module.exports = function(
     test: 'react-scripts test --env=jsdom',
     eject: 'react-scripts eject',
   };
+
+  appPackage.scripts = Object.assign(
+    {},
+    appPackage.scripts,
+    templateDependencies.scripts
+  );
+
+  appPackage['lint-staged'] = Object.assign(
+    {},
+    appPackage['lint-staged'],
+    templateDependencies['lint-staged']
+  );
 
   fs.writeFileSync(
     path.join(appPath, 'package.json'),
@@ -93,6 +126,7 @@ module.exports = function(
 
   let command;
   let args;
+  let devArgs;
 
   if (useYarn) {
     command = 'yarnpkg';
@@ -104,16 +138,18 @@ module.exports = function(
   args.push('react', 'react-dom');
 
   // Install additional template dependencies, if present
-  const templateDependenciesPath = path.join(
-    appPath,
-    '.template.dependencies.json'
-  );
   if (fs.existsSync(templateDependenciesPath)) {
-    const templateDependencies = require(templateDependenciesPath).dependencies;
     args = args.concat(
-      Object.keys(templateDependencies).map(key => {
-        return `${key}@${templateDependencies[key]}`;
+      Object.keys(templateDependencies.dependencies).map(key => {
+        return `${key}@${templateDependencies.dependencies[key]}`;
       })
+    );
+
+    devArgs = ['add'].concat(
+      Object.keys(templateDependencies.devDependencies).map(key => {
+        return `${key}@${templateDependencies.devDependencies[key]}`;
+      }),
+      '-D'
     );
     fs.unlinkSync(templateDependenciesPath);
   }
@@ -122,12 +158,35 @@ module.exports = function(
   // which doesn't install react and react-dom along with react-scripts
   // or template is presetend (via --internal-testing-template)
   if (!isReactInstalled(appPackage) || template) {
-    console.log(`Installing react and react-dom using ${command}...`);
+    console.log(`Installing dependencies using ${command}...`);
     console.log();
 
     const proc = spawn.sync(command, args, { stdio: 'inherit' });
     if (proc.status !== 0) {
       console.error(`\`${command} ${args.join(' ')}\` failed`);
+      return;
+    }
+
+    // Install devDependencies
+    console.log(`Installing development dependencies using ${command}...`);
+    console.log();
+
+    const devInstallProc = spawn.sync(command, devArgs, { stdio: 'inherit' });
+    if (devInstallProc.status !== 0) {
+      console.error(`\`${command} ${devArgs.join(' ')}\` failed`);
+      return;
+    }
+
+    // Rebuild node modules in case yarn removed vendor files
+    // See: https://github.com/yarnpkg/yarn/issues/1981
+    console.log(`Rebuilding node modules...`);
+    console.log();
+
+    const rebuildProc = spawn.sync('npm', ['rebuild'], {
+      stdio: 'inherit',
+    });
+    if (rebuildProc.status !== 0) {
+      console.error('npm rebuild failed');
       return;
     }
   }
