@@ -1,4 +1,35 @@
-# react-scripts
+# @reedsa/react-scripts
+
+Extension of react-scripts to enable greater flexibility to use custom templates with creact-react-app.
+
+### Basic Usage
+
+Run create-react-app and set `--scripts-version` to use `@reedsa/react-scripts`.
+
+```
+create-react-app <app-name> --scripts-version @reedsa/react-scripts --internal-testing-template <template-path>
+```
+
+Jump to [Templates](#templates) for more information about using custom templates.
+
+### Features
+
+* Bootstrap projects with a `package.json` tailored to your needs. Provides templates with the ability to configure `dependencies`, `devDependencies`, `scripts` out of the box.
+* `lint-staged` precommit hook support to run a code formatter or linter before commits are made to your project.
+> For information on how to configure Prettier with a pre-commit hook [view these docs](https://github.com/prettier/prettier#pre-commit-hook).
+
+### Templates
+
+A custom template can be used to bootstrap your project.
+
+[Preconfigured templates](https://github.com/reedsa/create-react-app-templates) are available to get started on a new React project. Also refer to this repository for information about creating your own custom templates.
+
+#### Using a Template
+
+Set `--internal-testing-template <template-path>` in the create-react-app command with the relative path to template you want to use. Without this flag create-react-app will use the default template.
+> If your template defines anything other than `dependencies` in the `package.json` you should also include `--scripts-version @reedsa/react-scripts` in the command.
+
+### Create React App
 
 This package includes scripts and configuration used by [Create React App](https://github.com/facebookincubator/create-react-app).<br>
 Please refer to its documentation:
