@@ -31,8 +31,29 @@ module.exports = function(
   const ownPath = path.join(appPath, 'node_modules', ownPackageName);
   const appPackage = require(path.join(appPath, 'package.json'));
   const useYarn = fs.existsSync(path.join(appPath, 'yarn.lock'));
-  const templateDependenciesPath = template
-    ? path.resolve(originalDirectory, template, '.template.dependencies.json')
+
+  const templatePath = findTemplatePath(
+    ownPath,
+    originalDirectory,
+    template,
+    useYarn,
+    verbose
+  );
+
+  if (!templatePath) {
+    console.error(
+      `Could not locate supplied template: ${chalk.green(template)}`
+    );
+    return;
+  }
+
+  console.log(
+    `Template found! Creating ${appName} using template ${template}...`
+  );
+  console.log();
+
+  const templateDependenciesPath = templatePath
+    ? path.resolve(templatePath, '.template.dependencies.json')
     : path.join(ownPath, 'template', '.template.dependencies.json');
 
   let templateDependencies = {};
@@ -77,7 +98,7 @@ module.exports = function(
   );
 
   fs.writeFileSync(
-    path.join(appPath, 'package.json'),
+    path.join(appPath, 'package.new.json'),
     JSON.stringify(appPackage, null, 2)
   );
 
@@ -90,17 +111,7 @@ module.exports = function(
   }
 
   // Copy the files for the user
-  const templatePath = template
-    ? path.resolve(originalDirectory, template)
-    : path.join(ownPath, 'template');
-  if (fs.existsSync(templatePath)) {
-    fs.copySync(templatePath, appPath);
-  } else {
-    console.error(
-      `Could not locate supplied template: ${chalk.green(templatePath)}`
-    );
-    return;
-  }
+  fs.copySync(templatePath, appPath);
 
   // Rename gitignore after the fact to prevent npm from renaming it to .npmignore
   // See: https://github.com/npm/npm/issues/1862
@@ -120,6 +131,12 @@ module.exports = function(
         }
       }
     }
+  );
+
+  fs.move(
+    path.join(appPath, 'package.new.json'),
+    path.join(appPath, 'package.json'),
+    { overwrite: true }
   );
 
   let command;
@@ -169,7 +186,9 @@ module.exports = function(
     console.log(`Installing development dependencies using ${command}...`);
     console.log();
 
-    const devInstallProc = spawn.sync(command, devArgs, { stdio: 'inherit' });
+    const devInstallProc = spawn.sync(command, devArgs, {
+      stdio: 'inherit',
+    });
     if (devInstallProc.status !== 0) {
       console.error(`\`${command} ${devArgs.join(' ')}\` failed`);
       return;
@@ -250,4 +269,118 @@ function isReactInstalled(appPackage) {
     typeof dependencies.react !== 'undefined' &&
     typeof dependencies['react-dom'] !== 'undefined'
   );
+}
+
+// Determine the location where the template resides
+function findTemplatePath(
+  ownPath,
+  originalDirectory,
+  template,
+  useYarn,
+  verbose
+) {
+  if (!template) {
+    return path.join(ownPath, 'template');
+  }
+
+  console.log(`Finding template ${template}...`);
+  console.log();
+
+  let templatePath = path.resolve(originalDirectory, template);
+  if (fs.existsSync(templatePath)) {
+    console.log(`Found local template in ${templatePath}`);
+    console.log();
+
+    return templatePath;
+  }
+
+  const templateInstallPath = getGlobalInstallTemplatePath(useYarn, template);
+
+  if (!templateInstallPath) {
+    return;
+  }
+
+  console.log(`Searching for template in ${templateInstallPath}...`);
+  console.log();
+
+  if (fs.existsSync(templateInstallPath)) {
+    return templateInstallPath;
+  }
+
+  console.log(`Template not found. Attempting to install...`);
+  console.log();
+
+  const installed = installTemplateFromNpm(useYarn, template, verbose);
+
+  if (installed) {
+    if (!fs.existsSync(templateInstallPath)) {
+      return;
+    }
+
+    return templateInstallPath;
+  }
+}
+
+function getGlobalInstallTemplatePath(useYarn, template) {
+  console.log(`Finding global installation directory...`);
+  console.log();
+
+  const result = runCommand(
+    useYarn,
+    ['root', '--global'],
+    ['global', 'dir'],
+    null
+  );
+
+  if (result.status === 'success') {
+    const globalInstallPath = result.text;
+
+    return path.join(globalInstallPath, 'node_modules', template);
+  }
+}
+
+function installTemplateFromNpm(useYarn, packageName, verbose) {
+  console.log(`Installing ${packageName}...`);
+
+  const result = runCommand(
+    useYarn,
+    ['install', '--global', verbose && '--verbose', packageName].filter(e => e),
+    ['global', 'add', packageName]
+  );
+
+  console.log(`Installed!`);
+  console.log();
+
+  return result.status === 'success';
+}
+
+function runCommand(
+  useYarn,
+  npmArgs,
+  yarnArgs,
+  options = { stdio: 'inherit' }
+) {
+  let command;
+  let args;
+  let installLocationArgs;
+
+  if (useYarn) {
+    command = 'yarnpkg';
+    args = yarnArgs;
+  } else {
+    command = 'npm';
+    args = npmArgs;
+  }
+
+  const proc = spawn.sync(command, args, options);
+  if (proc.status !== 0) {
+    return { status: 'error', text: `\`${command} ${args.join(' ')}\` failed` };
+  }
+
+  // Return output if available
+  if (proc.stdout) {
+    return { status: 'success', text: proc.stdout.toString().trim() };
+  }
+
+  return { status: 'success' };
 }
