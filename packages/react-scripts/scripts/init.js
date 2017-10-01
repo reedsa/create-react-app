@@ -18,6 +18,7 @@ const fs = require('fs-extra');
 const path = require('path');
 const chalk = require('chalk');
 const spawn = require('react-dev-utils/crossSpawn');
+const templateBuilder = require('./utils/templateBuilder');
 
 module.exports = function(
   appPath,
@@ -31,30 +32,25 @@ module.exports = function(
   const ownPath = path.join(appPath, 'node_modules', ownPackageName);
   const appPackage = require(path.join(appPath, 'package.json'));
   const useYarn = fs.existsSync(path.join(appPath, 'yarn.lock'));
-  const templateDependenciesPath = template
-    ? path.resolve(originalDirectory, template, '.template.dependencies.json')
-    : path.join(ownPath, 'template', '.template.dependencies.json');
 
-  let templateDependencies = {};
-  if (fs.existsSync(templateDependenciesPath)) {
-    templateDependencies = require(templateDependenciesPath);
+  const templatePath = templateBuilder.getTemplatePath(
+    template,
+    appName,
+    ownPath,
+    originalDirectory,
+    useYarn,
+    verbose
+  );
+
+  if (!templatePath) {
+    console.error(
+      `Could not locate supplied template: ${chalk.green(template)}`
+    );
+    return;
   }
 
   // Copy over some of the devDependencies
   appPackage.dependencies = appPackage.dependencies || {};
-
-  // Additional template dependencies
-  appPackage.dependencies = Object.assign(
-    {},
-    appPackage.dependencies,
-    templateDependencies.dependencies
-  );
-
-  appPackage.devDependencies = Object.assign(
-    {},
-    appPackage.devDependencies,
-    templateDependencies.devDependencies
-  );
 
   // Setup the script rules
   appPackage.scripts = {
@@ -64,17 +60,16 @@ module.exports = function(
     eject: 'react-scripts eject',
   };
 
-  appPackage.scripts = Object.assign(
-    {},
-    appPackage.scripts,
-    templateDependencies.scripts
+  const templateConfig = templateBuilder.getTemplateConfig(templatePath);
+  const appPackageConfig = templateBuilder.configureAppPackage(
+    appPackage,
+    templateConfig
   );
 
-  appPackage['lint-staged'] = Object.assign(
-    {},
-    appPackage['lint-staged'],
-    templateDependencies['lint-staged']
-  );
+  appPackage.dependencies = appPackageConfig.dependencies;
+  appPackage.devDependencies = appPackageConfig.devDependencies;
+  appPackage.scripts = appPackageConfig.scripts;
+  appPackage['lint-staged'] = appPackageConfig['lint-staged'];
 
   fs.writeFileSync(
     path.join(appPath, 'package.json'),
@@ -90,17 +85,9 @@ module.exports = function(
   }
 
   // Copy the files for the user
-  const templatePath = template
-    ? path.resolve(originalDirectory, template)
-    : path.join(ownPath, 'template');
-  if (fs.existsSync(templatePath)) {
-    fs.copySync(templatePath, appPath);
-  } else {
-    console.error(
-      `Could not locate supplied template: ${chalk.green(templatePath)}`
-    );
-    return;
-  }
+  fs.copySync(templatePath, appPath, {
+    filter: (src, dest) => (src.includes('package.json') ? false : true),
+  });
 
   // Rename gitignore after the fact to prevent npm from renaming it to .npmignore
   // See: https://github.com/npm/npm/issues/1862
@@ -136,16 +123,16 @@ module.exports = function(
   args.push('react', 'react-dom');
 
   // Install additional template dependencies, if present
-  if (fs.existsSync(templateDependenciesPath)) {
+  if (templateConfig) {
     args = args.concat(
-      Object.keys(templateDependencies.dependencies).map(key => {
-        return `${key}@${templateDependencies.dependencies[key]}`;
+      Object.keys(templateConfig.dependencies).map(key => {
+        return `${key}@${templateConfig.dependencies[key]}`;
       })
     );
 
     devArgs = ['add'].concat(
-      Object.keys(templateDependencies.devDependencies).map(key => {
-        return `${key}@${templateDependencies.devDependencies[key]}`;
+      Object.keys(templateConfig.devDependencies).map(key => {
+        return `${key}@${templateConfig.devDependencies[key]}`;
       }),
       '-D'
     );
@@ -169,7 +156,9 @@ module.exports = function(
     console.log(`Installing development dependencies using ${command}...`);
     console.log();
 
-    const devInstallProc = spawn.sync(command, devArgs, { stdio: 'inherit' });
+    const devInstallProc = spawn.sync(command, devArgs, {
+      stdio: 'inherit',
+    });
     if (devInstallProc.status !== 0) {
       console.error(`\`${command} ${devArgs.join(' ')}\` failed`);
       return;
