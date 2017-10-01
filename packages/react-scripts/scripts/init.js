@@ -18,6 +18,7 @@ const fs = require('fs-extra');
 const path = require('path');
 const chalk = require('chalk');
 const spawn = require('react-dev-utils/crossSpawn');
+const templateBuilder = require('./utils/templateBuilder');
 
 module.exports = function(
   appPath,
@@ -32,10 +33,11 @@ module.exports = function(
   const appPackage = require(path.join(appPath, 'package.json'));
   const useYarn = fs.existsSync(path.join(appPath, 'yarn.lock'));
 
-  const templatePath = findTemplatePath(
+  const templatePath = templateBuilder.getTemplatePath(
+    template,
+    appName,
     ownPath,
     originalDirectory,
-    template,
     useYarn,
     verbose
   );
@@ -47,35 +49,8 @@ module.exports = function(
     return;
   }
 
-  console.log(
-    `Template found! Creating ${appName} using template ${template}...`
-  );
-  console.log();
-
-  const templateDependenciesPath = templatePath
-    ? path.resolve(templatePath, '.template.dependencies.json')
-    : path.join(ownPath, 'template', '.template.dependencies.json');
-
-  let templateDependencies = {};
-  if (fs.existsSync(templateDependenciesPath)) {
-    templateDependencies = require(templateDependenciesPath);
-  }
-
   // Copy over some of the devDependencies
   appPackage.dependencies = appPackage.dependencies || {};
-
-  // Additional template dependencies
-  appPackage.dependencies = Object.assign(
-    {},
-    appPackage.dependencies,
-    templateDependencies.dependencies
-  );
-
-  appPackage.devDependencies = Object.assign(
-    {},
-    appPackage.devDependencies,
-    templateDependencies.devDependencies
-  );
 
   // Setup the script rules
   appPackage.scripts = {
@@ -85,20 +60,19 @@ module.exports = function(
     eject: 'react-scripts eject',
   };
 
-  appPackage.scripts = Object.assign(
-    {},
-    appPackage.scripts,
-    templateDependencies.scripts
+  const templateConfig = templateBuilder.getTemplateConfig(templatePath);
+  const appPackageConfig = templateBuilder.configureAppPackage(
+    appPackage,
+    templateConfig
   );
 
-  appPackage['lint-staged'] = Object.assign(
-    {},
-    appPackage['lint-staged'],
-    templateDependencies['lint-staged']
-  );
+  appPackage.dependencies = appPackageConfig.dependencies;
+  appPackage.devDependencies = appPackageConfig.devDependencies;
+  appPackage.scripts = appPackageConfig.scripts;
+  appPackage['lint-staged'] = appPackageConfig['lint-staged'];
 
   fs.writeFileSync(
-    path.join(appPath, 'package.new.json'),
+    path.join(appPath, 'package.json'),
     JSON.stringify(appPackage, null, 2)
   );
 
@@ -111,7 +85,9 @@ module.exports = function(
   }
 
   // Copy the files for the user
-  fs.copySync(templatePath, appPath);
+  fs.copySync(templatePath, appPath, {
+    filter: (src, dest) => (src.includes('package.json') ? false : true),
+  });
 
   // Rename gitignore after the fact to prevent npm from renaming it to .npmignore
   // See: https://github.com/npm/npm/issues/1862
@@ -133,12 +109,6 @@ module.exports = function(
     }
   );
 
-  fs.move(
-    path.join(appPath, 'package.new.json'),
-    path.join(appPath, 'package.json'),
-    { overwrite: true }
-  );
-
   let command;
   let args;
   let devArgs;
@@ -153,16 +123,16 @@ module.exports = function(
   args.push('react', 'react-dom');
 
   // Install additional template dependencies, if present
-  if (fs.existsSync(templateDependenciesPath)) {
+  if (templateConfig) {
     args = args.concat(
-      Object.keys(templateDependencies.dependencies).map(key => {
-        return `${key}@${templateDependencies.dependencies[key]}`;
+      Object.keys(templateConfig.dependencies).map(key => {
+        return `${key}@${templateConfig.dependencies[key]}`;
       })
     );
 
     devArgs = ['add'].concat(
-      Object.keys(templateDependencies.devDependencies).map(key => {
-        return `${key}@${templateDependencies.devDependencies[key]}`;
+      Object.keys(templateConfig.devDependencies).map(key => {
+        return `${key}@${templateConfig.devDependencies[key]}`;
       }),
       '-D'
     );
@@ -269,118 +239,4 @@ function isReactInstalled(appPackage) {
     typeof dependencies.react !== 'undefined' &&
     typeof dependencies['react-dom'] !== 'undefined'
   );
-}
-
-// Determine the location where the template resides
-function findTemplatePath(
-  ownPath,
-  originalDirectory,
-  template,
-  useYarn,
-  verbose
-) {
-  if (!template) {
-    return path.join(ownPath, 'template');
-  }
-
-  console.log(`Finding template ${template}...`);
-  console.log();
-
-  let templatePath = path.resolve(originalDirectory, template);
-  if (fs.existsSync(templatePath)) {
-    console.log(`Found local template in ${templatePath}`);
-    console.log();
-
-    return templatePath;
-  }
-
-  const templateInstallPath = getGlobalInstallTemplatePath(useYarn, template);
-
-  if (!templateInstallPath) {
-    return;
-  }
-
-  console.log(`Searching for template in ${templateInstallPath}...`);
-  console.log();
-
-  if (fs.existsSync(templateInstallPath)) {
-    return templateInstallPath;
-  }
-
-  console.log(`Template not found. Attempting to install...`);
-  console.log();
-
-  const installed = installTemplateFromNpm(useYarn, template, verbose);
-
-  if (installed) {
-    if (!fs.existsSync(templateInstallPath)) {
-      return;
-    }
-
-    return templateInstallPath;
-  }
-}
-
-function getGlobalInstallTemplatePath(useYarn, template) {
-  console.log(`Finding global installation directory...`);
-  console.log();
-
-  const result = runCommand(
-    useYarn,
-    ['root', '--global'],
-    ['global', 'dir'],
-    null
-  );
-
-  if (result.status === 'success') {
-    const globalInstallPath = result.text;
-
-    return path.join(globalInstallPath, 'node_modules', template);
-  }
-}
-
-function installTemplateFromNpm(useYarn, packageName, verbose) {
-  console.log(`Installing ${packageName}...`);
-
-  const result = runCommand(
-    useYarn,
-    ['install', '--global', verbose && '--verbose', packageName].filter(e => e),
-    ['global', 'add', packageName]
-  );
-
-  console.log(`Installed!`);
-  console.log();
-
-  return result.status === 'success';
-}
-
-function runCommand(
-  useYarn,
-  npmArgs,
-  yarnArgs,
-  options = { stdio: 'inherit' }
-) {
-  let command;
-  let args;
-  let installLocationArgs;
-
-  if (useYarn) {
-    command = 'yarnpkg';
-    args = yarnArgs;
-  } else {
-    command = 'npm';
-    args = npmArgs;
-  }
-
-  const proc = spawn.sync(command, args, options);
-  if (proc.status !== 0) {
-    return { status: 'error', text: `\`${command} ${args.join(' ')}\` failed` };
-  }
-
-  // Return output if available
-  if (proc.stdout) {
-    return { status: 'success', text: proc.stdout.toString().trim() };
-  }
-
-  return { status: 'success' };
 }
