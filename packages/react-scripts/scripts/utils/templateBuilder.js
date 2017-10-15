@@ -69,12 +69,16 @@ function getTemplatePath(
   if (!template) {
     templatePath = path.join(ownPath, 'template');
   } else {
-    templatePath = findOrInstallTemplate(
-      originalDirectory,
-      template,
-      useYarn,
-      verbose
-    );
+    try {
+      templatePath = findOrInstallTemplate(
+        originalDirectory,
+        template,
+        useYarn,
+        verbose
+      );
+    } catch (e) {
+      throw new Error(e.message);
+    }
   }
 
   if (templatePath) {
@@ -105,36 +109,37 @@ function findOrInstallTemplate(originalDirectory, template, useYarn, verbose) {
     }
   }
 
-  const installPath = getGlobalInstallPath(useYarn);
+  const templateInstallPath = path.resolve(originalDirectory, 'temp');
+  const templatePath = path.resolve(
+    templateInstallPath,
+    'node_modules',
+    template
+  );
 
-  if (installPath) {
-    const templateInstallPath = path.join(
-      installPath,
-      'node_modules',
-      template
-    );
-
-    if (findTemplateByPath(templateInstallPath)) {
-      return templateInstallPath;
-    }
-
-    console.log(`Template not found. Attempting to install...`);
-    console.log();
-
-    const templateInstalled = installTemplateFromNpm(
-      useYarn,
-      template,
-      verbose
-    );
-
-    if (templateInstalled) {
-      if (findTemplateByPath(templateInstallPath)) {
-        return templateInstallPath;
-      }
-    }
+  if (findTemplateByPath(templatePath)) {
+    return templatePath;
   }
 
-  return;
+  console.log(`Template not found. Attempting to install...`);
+  console.log();
+
+  let templateInstalled = false;
+  try {
+    templateInstalled = installTemplateFromNpm(
+      useYarn,
+      template,
+      templateInstallPath,
+      verbose
+    );
+  } catch (e) {
+    throw new Error(e.message);
+  }
+
+  if (templatePath) {
+    if (findTemplateByPath(templatePath)) {
+      return templatePath;
+    }
+  }
 }
 
 function findTemplateByPath(path) {
@@ -150,71 +155,58 @@ function findTemplateByPath(path) {
   return templateExists;
 }
 
-function getGlobalInstallPath(useYarn) {
-  console.log(`Finding global installation directory...`);
-  console.log();
-
-  const result = runCommand(
-    useYarn,
-    ['root', '--global'],
-    ['global', 'dir'],
-    null
-  );
-
-  if (result.status === 'success') {
-    return result.text;
-  }
-}
-
-function installTemplateFromNpm(useYarn, packageName, verbose) {
+function installTemplateFromNpm(useYarn, packageName, installPath, verbose) {
   console.log(`Installing ${packageName}...`);
 
-  const result = runCommand(
-    useYarn,
-    ['install', '--global', verbose && '--verbose', packageName].filter(e => e),
-    ['global', 'add', packageName]
-  );
-
-  const isInstalled = result.status === 'success';
-  if (isInstalled) {
-    console.log(`Installed!`);
-    console.log();
-  }
-
-  return isInstalled;
-}
-
-function runCommand(
-  useYarn,
-  npmArgs,
-  yarnArgs,
-  options = { stdio: 'inherit' }
-) {
-  let command;
-  let args;
-  let installLocationArgs;
+  let command, args;
 
   if (useYarn) {
     command = 'yarnpkg';
-    args = yarnArgs;
+    args = ['global', 'add', packageName, '--global-folder', installPath];
   } else {
     command = 'npm';
-    args = npmArgs;
+    args = [
+      'install',
+      '--prefix',
+      installPath,
+      verbose && '--verbose',
+      packageName,
+    ].filter(e => e);
   }
+
+  try {
+    runCommand(command, args, { stdio: 'inherit' });
+  } catch (e) {
+    throw new Error(e.message);
+  }
+
+  console.log(`Installed!`);
+  console.log();
+
+  return true;
+}
+
+function cleanup(originalDirectory) {
+  const templateInstallPath = path.resolve(originalDirectory, 'temp');
+  fs.removeSync(templateInstallPath);
+}
+
+function runCommand(command, args, options) {
+  console.log(`Executing command \`${command} ${args.join(' ')}\``);
 
   const proc = spawn.sync(command, args, options);
   if (proc.status !== 0) {
-    return { status: 'error', text: `\`${command} ${args.join(' ')}\` failed` };
+    //return { status: 'error', text: `\`${command} ${args.join(' ')}\` failed` };
+    throw new Error(`\`${command} ${args.join(' ')}\` failed`);
   }
 
   // Return output if available
   if (proc.stdout) {
-    return { status: 'success', text: proc.stdout.toString().trim() };
+    return proc.stdout.toString().trim();
   }
-
-  return { status: 'success' };
 }
 
 module.exports.configureAppPackage = configureAppPackage;
 module.exports.getTemplatePath = getTemplatePath;
 module.exports.getTemplateConfig = getTemplateConfig;
+module.exports.cleanup = cleanup;
