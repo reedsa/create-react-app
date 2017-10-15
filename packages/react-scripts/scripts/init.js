@@ -33,14 +33,20 @@ module.exports = function(
   const appPackage = require(path.join(appPath, 'package.json'));
   const useYarn = fs.existsSync(path.join(appPath, 'yarn.lock'));
 
-  const templatePath = templateBuilder.getTemplatePath(
-    template,
-    appName,
-    ownPath,
-    originalDirectory,
-    useYarn,
-    verbose
-  );
+  let templatePath;
+  try {
+    templatePath = templateBuilder.getTemplatePath(
+      template,
+      appName,
+      ownPath,
+      originalDirectory,
+      useYarn,
+      verbose
+    );
+  } catch (error) {
+    console.error(error.message);
+    return;
+  }
 
   if (!templatePath) {
     console.error(
@@ -177,6 +183,8 @@ module.exports = function(
       return;
     }
   }
+
+  templateBuilder.cleanup(originalDirectory);
 
   // Display the most elegant way to cd.
   // This needs to handle an undefined originalDirectory for
