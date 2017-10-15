@@ -2,13 +2,13 @@
   "name": "@reedsa/react-scripts",
   "version": "0.1.1",
   "description": "Configuration and scripts for Create React App.",
-  "repository": "facebookincubator/create-react-app",
+  "repository": "reedsa/create-react-app",
   "license": "MIT",
   "engines": {
     "node": ">=6"
   },
   "bugs": {
-    "url": "https://github.com/facebookincubator/create-react-app/issues"
+    "url": "https://github.com/reedsa/create-react-app/issues"
   },
   "files": [
     "bin",
