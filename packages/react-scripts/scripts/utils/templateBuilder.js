@@ -19,7 +19,7 @@ const path = require('path');
 const chalk = require('chalk');
 const spawn = require('react-dev-utils/crossSpawn');
 
-function configureAppPackage(templateConfig, appPackage) {
+function configureAppPackage(appPackage, templateConfig) {
   appPackage.dependencies = Object.assign(
     {},
     appPackage.dependencies,
